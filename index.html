@@ -37,9 +37,29 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 #status.err{color:var(--warn)}
 #player{position:sticky;top:8px;z-index:5;box-shadow:0 6px 20px rgb(0 0 0/.12)}
 audio{width:100%}
-#caption{margin-top:12px;min-height:4.4em;padding:14px 18px;border-radius:8px;background:#0b1013;color:#f3f5f6;
-  font:1.3rem/1.45 "Iowan Old Style",Georgia,serif;display:flex;align-items:center}
-#caption:empty::before{content:"Captions appear here while you play";color:#7f8c97;font-size:1rem;font-family:system-ui,sans-serif}
+#caption{margin-top:12px;min-height:5.4em;padding:14px 18px;border-radius:8px;background:#0b1013;color:#f3f5f6;
+  font:1.35rem/1.7 "Iowan Old Style",Georgia,serif;display:flex;align-items:center}
+#capText:empty::before{content:"Captions appear here while you play";color:#7f8c97;font-size:1rem;font-family:system-ui,sans-serif}
+.w{opacity:.5}
+.w.done{opacity:1}
+.w.cur{opacity:1;background:var(--accent);color:var(--accent-ink);border-radius:4px;padding:2px 4px;margin:0 -4px}
+.drop.compact{padding:12px}
+.drop.compact span{display:none}
+#files{display:grid;gap:8px;margin-top:12px}
+#files:empty{display:none}
+.chip{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1.5px solid var(--line);border-radius:8px;cursor:pointer}
+.chip:hover{border-color:var(--accent)}
+.chip.sel{border-color:var(--accent);background:var(--hl)}
+.chip .ok{flex:none;width:26px;height:26px;border-radius:50%;border:2px solid var(--line);color:var(--accent-ink);display:grid;place-items:center;font-size:.85rem}
+.chip .ok.done{background:var(--accent);border-color:var(--accent)}
+.chip .ok.working{border-color:var(--accent);color:var(--accent)}
+.chip .ok.error{background:var(--warn);border-color:var(--warn)}
+.chip .meta{min-width:0;flex:1;display:grid}
+.chip strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip .meta span{color:var(--muted);font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#list:empty::before{content:"Not transcribed yet. Press Transcribe.";color:var(--muted);padding:8px 10px;display:block}
+#outTitle{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip button{flex:none;width:34px;height:34px;padding:0;border-radius:50%;font-size:1.4rem;line-height:1;display:grid;place-items:center}
 .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
 h2{margin:0 auto 0 0;font-size:1.1rem}
 .chk{color:var(--muted);font-size:.9rem;display:flex;gap:6px;align-items:center}
@@ -53,15 +73,16 @@ h2{margin:0 auto 0 0;font-size:1.1rem}
 <main>
   <header>
     <h1>Lecture Transcriber</h1>
-    <p>Turn a lecture recording into text. Everything runs in your browser, so your audio never leaves your computer.</p>
+    <p>Turn lecture recordings into text. Everything runs in your browser, so your audio never leaves your computer.</p>
   </header>
 
   <section class="card">
     <label class="drop" id="dropZone">
-      <input type="file" id="file" accept="audio/*,video/*" hidden>
-      <strong>Choose an audio file or drop it here</strong>
-      <span id="fname">mp3, m4a, wav, ogg, webm</span>
+      <input type="file" id="file" accept="audio/*,video/*" multiple hidden>
+      <strong id="dropMsg">Choose audio files or drop them here</strong>
+      <span>mp3, m4a, wav, ogg, webm</span>
     </label>
+    <div id="files"></div>
     <div class="row">
       <label>Model
         <select id="model">
@@ -80,12 +101,12 @@ h2{margin:0 auto 0 0;font-size:1.1rem}
 
   <section class="card" id="player" hidden>
     <audio id="audio" controls></audio>
-    <div id="caption"></div>
+    <div id="caption"><div id="capText"></div></div>
   </section>
 
   <section class="card" id="out" hidden>
     <div class="toolbar">
-      <h2>Transcript</h2>
+      <h2 id="outTitle">Transcript</h2>
       <label class="chk"><input type="checkbox" id="ts"> Timestamps in .txt</label>
       <button id="copy">Copy</button>
       <button id="txt">Save .txt</button>
@@ -95,7 +116,7 @@ h2{margin:0 auto 0 0;font-size:1.1rem}
   </section>
 </main>
 
-<!-- Runs in a Web Worker so the page stays responsive during transcription   -->
+<!-- Runs in a Web Worker so the page stays responsive during transcription -->
 <script type="text/plain" id="workerSrc">
 import { pipeline } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1";
 let asr = null, loaded = null;
@@ -144,7 +165,8 @@ self.onmessage = async ({ data }) => {
 <script>
 const $ = id => document.getElementById(id);
 const audio = $('audio'), list = $('list');
-let worker = null, file = null, running = false, segments = [], active = -1;
+let worker = null, items = [], cur = null, runItem = null, resolveRun = null;
+let running = false, stopped = false, active = -1, capWord = -1, raf = 0, nextId = 1;
 const dl = {};
 
 /* ---------- helpers ---------- */
@@ -152,27 +174,78 @@ const p2 = n => String(n).padStart(2, '0');
 const clock = t => { const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = Math.floor(t % 60);
   return (h ? h + ':' + p2(m) : m) + ':' + p2(s); };
 const srtTime = t => `${p2(Math.floor(t / 3600))}:${p2(Math.floor(t % 3600 / 60))}:${p2(Math.floor(t % 60))},${String(Math.floor(t * 1000) % 1000).padStart(3, '0')}`;
+const fmtSize = b => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
 const status = (t, err) => { $('status').textContent = t; $('status').classList.toggle('err', !!err); };
-const setBusy = b => { running = b; $('go').disabled = b; $('model').disabled = b; $('stop').hidden = !b; $('prog').hidden = !b; };
 const progress = f => { $('fill').style.width = Math.round(f * 100) + '%'; };
+const segs = () => cur ? cur.segments : [];
+const setBusy = b => { running = b; $('model').disabled = b; $('stop').hidden = !b; $('prog').hidden = !b; renderFiles(); };
 
-/* ---------- file selection ---------- */
-function setFile(f) {
-  if (!f || running) return;
-  file = f;
-  $('fname').textContent = f.name;
-  if (audio.src.startsWith('blob:')) URL.revokeObjectURL(audio.src);
-  audio.src = URL.createObjectURL(f);
-  $('player').hidden = false;
-  $('go').disabled = false;
-  segments = []; list.innerHTML = ''; $('out').hidden = true; $('caption').textContent = '';
-  status('Ready. Press Transcribe.');
+/* ---------- file list ---------- */
+const VALID = /\.(mp3|m4a|wav|ogg|oga|opus|webm|flac|aac|mp4|mov|mkv)$/i;
+function addFiles(fl) {
+  const ok = [...fl].filter(f => /^(audio|video)\//.test(f.type) || VALID.test(f.name));
+  if (!ok.length) { status('Those files are not audio. Try mp3, m4a or wav.', true); return; }
+  for (const f of ok) items.push({ id: nextId++, file: f, url: URL.createObjectURL(f), segments: [], status: 'queued', pct: 0, err: '' });
+  if (!cur) select(items[0]); else renderFiles();
+  if (!running) status(`${items.length} file${items.length > 1 ? 's' : ''} ready. Press Transcribe.`);
 }
-$('file').onchange = e => setFile(e.target.files[0]);
+const LABEL = { queued: 'Queued', done: 'Done', cancelled: 'Cancelled, partial transcript kept' };
+function renderFiles() {
+  const box = $('files'); box.textContent = '';
+  for (const it of items) {
+    const row = document.createElement('div');
+    row.className = 'chip' + (it === cur ? ' sel' : ''); row.dataset.id = it.id; row.tabIndex = 0;
+    const ok = document.createElement('span'); ok.className = 'ok ' + it.status;
+    ok.textContent = it.status === 'done' ? '\u2713' : it.status === 'working' ? '\u2026' : it.status === 'error' ? '!' : '';
+    const meta = document.createElement('div'); meta.className = 'meta';
+    const name = document.createElement('strong'); name.textContent = it.file.name;
+    const sub = document.createElement('span');
+    const label = it.status === 'working' ? `Transcribing ${Math.round(it.pct * 100)}%` : it.status === 'error' ? it.err : LABEL[it.status];
+    sub.textContent = `${fmtSize(it.file.size)}, ${label}`; sub.title = sub.textContent;
+    meta.append(name, sub);
+    const x = document.createElement('button'); x.className = 'x'; x.title = 'Remove file';
+    x.setAttribute('aria-label', 'Remove ' + it.file.name); x.innerHTML = '&times;';
+    row.append(ok, meta, x); box.append(row);
+  }
+  const todo = items.filter(x => x.status !== 'done' && x.status !== 'working').length;
+  $('go').disabled = running || todo === 0;
+  $('go').textContent = todo > 1 ? `Transcribe ${todo} files` : 'Transcribe';
+  $('dropZone').classList.toggle('compact', items.length > 0);
+  $('dropMsg').textContent = items.length ? 'Add more files' : 'Choose audio files or drop them here';
+  if (cur) $('outTitle').textContent = items.length > 1 ? cur.file.name : 'Transcript';
+}
+$('files').onclick = e => {
+  const row = e.target.closest('.chip'); if (!row) return;
+  const it = items.find(x => x.id == row.dataset.id);
+  if (e.target.closest('.x')) removeItem(it); else if (it !== cur) select(it);
+};
+$('files').onkeydown = e => { if (e.key === 'Enter' && e.target.classList.contains('chip')) e.target.click(); };
+
+function resetList() { list.textContent = ''; $('capText').textContent = ''; active = -1; capWord = -1; }
+function select(it) {
+  cur = it; audio.pause(); resetList();
+  if (!it) { audio.removeAttribute('src'); audio.load(); $('player').hidden = true; $('out').hidden = true; renderFiles(); return; }
+  audio.src = it.url; $('player').hidden = false; $('out').hidden = false;
+  it.segments.forEach(addRow); renderFiles();
+}
+function removeItem(it) {
+  if (it.segments.length && !confirm(`Remove ${it.file.name} and its transcript?`)) return;
+  if (it === runItem) {   // stop this one; the queue carries on with the next file
+    if (worker) { worker.terminate(); worker = null; }
+    const r = resolveRun; runItem = null; resolveRun = null; r && r();
+  }
+  URL.revokeObjectURL(it.url);
+  items = items.filter(x => x !== it);
+  if (cur === it) select(items[0] || null); else renderFiles();
+  if (!items.length && !running) status('');
+}
+
+/* ---------- drag and drop ---------- */
+$('file').onchange = e => { addFiles(e.target.files); e.target.value = ''; };
 const dz = $('dropZone');
 ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('over'); }));
 ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('over'); }));
-dz.addEventListener('drop', e => setFile(e.dataTransfer.files[0]));
+dz.addEventListener('drop', e => addFiles(e.dataTransfer.files));
 
 /* ---------- decode to 16 kHz mono (what Whisper expects) ---------- */
 async function decode(f) {
@@ -184,90 +257,140 @@ async function decode(f) {
   return out;
 }
 
-/* ---------- worker ---------- */
+/* ---------- worker + queue ---------- */
+const finish = () => { const r = resolveRun; runItem = null; resolveRun = null; renderFiles(); r && r(); };
 function getWorker() {
   if (worker) return worker;
   const url = URL.createObjectURL(new Blob([$('workerSrc').textContent], { type: 'text/javascript' }));
   worker = new Worker(url, { type: 'module' });
   worker.onmessage = ({ data: m }) => {
-    if (m.type === 'status') status(m.text);
+    const it = runItem; if (!it) return;
+    if (m.type === 'status') status(m.text === 'Transcribing...' ? `Transcribing ${it.file.name}...` : m.text);
     else if (m.type === 'dl') {
       dl[m.file] = m;
       const L = Object.values(dl).reduce((a, x) => a + x.loaded, 0), T = Object.values(dl).reduce((a, x) => a + x.total, 0);
       progress(L / T); status(`Downloading model... ${Math.round(L / T * 100)}%`);
     } else if (m.type === 'segs') {
-      addSegments(m.segs); progress(m.pct);
-      status(`Transcribing... ${Math.round(m.pct * 100)}%. You can already play finished parts.`);
-    } else if (m.type === 'done') {
-      setBusy(false); status(`Done: ${segments.length} segments.`);
-    } else if (m.type === 'error') {
-      setBusy(false); status('Something went wrong: ' + m.text, true);
-    }
+      addSegments(it, m.segs); it.pct = m.pct; progress(m.pct); renderFiles();
+      status(`Transcribing ${it.file.name}: ${Math.round(m.pct * 100)}%. You can already play finished parts.`);
+    } else if (m.type === 'done') { it.status = 'done'; it.pct = 1; finish(); }
+    else if (m.type === 'error') { it.status = 'error'; it.err = 'Failed: ' + m.text; finish(); }
   };
-  worker.onerror = e => { setBusy(false); status('Worker failed to start. Serve the page over http(s), not file://. ' + (e.message || ''), true); worker = null; };
+  worker.onerror = e => {
+    worker = null; const it = runItem; if (!it) return;
+    it.status = 'error'; it.err = 'Worker failed to start. Serve the page over http(s), not file://.'; finish();
+  };
   return worker;
 }
-
-$('go').onclick = async () => {
-  if (!file || running) return;
-  setBusy(true); progress(0);
-  segments = []; list.innerHTML = ''; active = -1; $('out').hidden = false;
-  status('Decoding audio...');
-  let data;
-  try { data = await decode(file); }
-  catch { setBusy(false); status('This file could not be decoded. Try mp3, m4a or wav.', true); return; }
-  getWorker().postMessage({ model: $('model').value, audio: data }, [data.buffer]);
-};
+function transcribe(it) {
+  return new Promise(async res => {
+    runItem = it; resolveRun = res;
+    it.status = 'working'; it.pct = 0; it.segments = []; progress(0);
+    if (it === cur) resetList();
+    renderFiles(); status(`Decoding ${it.file.name}...`);
+    let data;
+    try { data = await decode(it.file); }
+    catch { if (runItem === it) { it.status = 'error'; it.err = 'Could not decode this file'; finish(); } return; }
+    if (runItem !== it) return;   // cancelled or removed while decoding
+    getWorker().postMessage({ model: $('model').value, audio: data }, [data.buffer]);
+  });
+}
+async function runQueue() {
+  if (running) return;
+  items.forEach(x => { if (x.status === 'cancelled' || x.status === 'error') x.status = 'queued'; });
+  stopped = false; setBusy(true); progress(0);
+  let it;
+  while (!stopped && (it = items.find(x => x.status === 'queued'))) await transcribe(it);
+  setBusy(false);
+  const nDone = items.filter(x => x.status === 'done').length, nErr = items.filter(x => x.status === 'error').length;
+  if (!items.length) status('');
+  else if (stopped) status('Cancelled. Finished and partial transcripts are kept.');
+  else if (nErr) status(`Finished with ${nErr} error${nErr > 1 ? 's' : ''}. See the file list.`, true);
+  else status(`Done: ${nDone} file${nDone !== 1 ? 's' : ''} transcribed.`);
+}
+$('go').onclick = runQueue;
 $('stop').onclick = () => {
+  stopped = true;
   if (worker) { worker.terminate(); worker = null; }
-  setBusy(false); status('Cancelled. The partial transcript is kept.');
+  if (runItem) { runItem.status = 'cancelled'; const r = resolveRun; runItem = null; resolveRun = null; r && r(); }
 };
 
 /* ---------- transcript + live captions ---------- */
-function addSegments(segs) {
-  for (const s of segs) {
-    const i = segments.push(s) - 1;
-    const row = document.createElement('div'); row.className = 'seg'; row.dataset.i = i;
-    const t = document.createElement('button'); t.className = 't'; t.textContent = clock(s.start); t.title = 'Play from here';
-    const x = document.createElement('span'); x.textContent = s.text;
-    row.append(t, x); list.append(row);
-  }
+// Whisper gives segment timing; word starts are estimated by spreading the segment
+// duration across its words by length, with a little extra pause after punctuation.
+function timeWords(s) {
+  const ws = s.text.split(/\s+/).filter(Boolean);
+  const wt = ws.map(w => w.length + 1 + (/[,;:]$/.test(w) ? 2 : /[.?!]$/.test(w) ? 4 : 0));
+  const total = wt.reduce((a, b) => a + b, 0), dur = Math.max(s.end - s.start, 0.3);
+  let acc = 0;
+  return ws.map((w, k) => { const start = s.start + dur * acc / total; acc += wt[k]; return { w, start }; });
+}
+function addRow(s) {
+  const row = document.createElement('div'); row.className = 'seg'; row.dataset.i = list.children.length;
+  const t = document.createElement('button'); t.className = 't'; t.textContent = clock(s.start); t.title = 'Play from here';
+  const x = document.createElement('span'); x.textContent = s.text;
+  row.append(t, x); list.append(row);
+}
+function addSegments(it, newSegs) {
+  for (const s of newSegs) { s.words = timeWords(s); it.segments.push(s); if (it === cur) addRow(s); }
 }
 list.onclick = e => {
   const row = e.target.closest('.seg'); if (!row) return;
-  audio.currentTime = segments[row.dataset.i].start; audio.play();
+  audio.currentTime = segs()[row.dataset.i].start; audio.play();
 };
-audio.ontimeupdate = () => {
-  const t = audio.currentTime;
-  const i = segments.findLastIndex(s => s.start <= t + 0.05);
-  const on = i >= 0 && t <= segments[i].end + 1.5;
-  $('caption').textContent = on ? segments[i].text : '';
+function sync() {
+  const S = segs(), t = audio.currentTime, cap = $('capText');
+  const i = S.findLastIndex(s => s.start <= t + 0.05);
+  const on = i >= 0 && t <= S[i].end + 1.5;
   const idx = on ? i : -1;
-  if (idx === active) return;
-  list.children[active]?.classList.remove('active');
-  active = idx;
-  const el = list.children[idx];
-  if (el) { el.classList.add('active'); if (!audio.paused) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
-};
+  if (idx !== active) {
+    cap.textContent = '';
+    if (on) for (const w of S[i].words) {
+      const s = document.createElement('span'); s.className = 'w'; s.textContent = w.w;
+      cap.append(s, ' ');
+    }
+    capWord = -2; // force a repaint of word states
+    list.children[active]?.classList.remove('active');
+    active = idx;
+    const el = list.children[idx];
+    if (el) { el.classList.add('active'); if (!audio.paused) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+  }
+  if (on) {
+    const cur2 = S[i].words.findLastIndex(w => w.start <= t);
+    if (cur2 !== capWord) {
+      [...cap.children].forEach((el, k) => { el.classList.toggle('done', k < cur2); el.classList.toggle('cur', k === cur2); });
+      capWord = cur2;
+    }
+  }
+}
+// timeupdate only fires ~4x per second, so run a per-frame loop while playing for smooth word highlighting
+function loop() {
+  cancelAnimationFrame(raf);
+  const f = () => { sync(); if (!audio.paused && !audio.ended) raf = requestAnimationFrame(f); };
+  f();
+}
+audio.onplay = loop;
+audio.onpause = audio.onseeked = audio.ontimeupdate = sync;
 
-/* ---------- export ---------- */
-const base = () => (file ? file.name.replace(/\.[^.]+$/, '') : 'transcript');
+/* ---------- export (current file) ---------- */
+const base = () => (cur ? cur.file.name.replace(/\.[^.]+$/, '') : 'transcript');
 function toTxt() {
-  if ($('ts').checked) return segments.map(s => `[${clock(s.start)}] ${s.text}`).join('\n');
+  const S = segs();
+  if ($('ts').checked) return S.map(s => `[${clock(s.start)}] ${s.text}`).join('\n');
   const paras = [];
-  for (let i = 0; i < segments.length; i += 5) paras.push(segments.slice(i, i + 5).map(s => s.text).join(' '));
+  for (let i = 0; i < S.length; i += 5) paras.push(S.slice(i, i + 5).map(s => s.text).join(' '));
   return paras.join('\n\n');
 }
-const toSrt = () => segments.map((s, i) => `${i + 1}\n${srtTime(s.start)} --> ${srtTime(Math.max(s.end, s.start + 0.5))}\n${s.text}\n`).join('\n');
+const toSrt = () => segs().map((s, i) => `${i + 1}\n${srtTime(s.start)} --> ${srtTime(Math.max(s.end, s.start + 0.5))}\n${s.text}\n`).join('\n');
 function save(name, text) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
   a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
-$('txt').onclick = () => segments.length && save(base() + '.txt', toTxt());
-$('srt').onclick = () => segments.length && save(base() + '.srt', toSrt());
+$('txt').onclick = () => segs().length && save(base() + '.txt', toTxt());
+$('srt').onclick = () => segs().length && save(base() + '.srt', toSrt());
 $('copy').onclick = async () => {
-  if (!segments.length) return;
+  if (!segs().length) return;
   await navigator.clipboard.writeText(toTxt());
   const b = $('copy'); b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Copy', 1200);
 };
