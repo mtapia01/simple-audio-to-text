@@ -123,6 +123,28 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   outline-offset: 2px;
 }
 
+/* Smooth scrolling for the whole page */
+html {
+  scroll-behavior: smooth;
+}
+
+#backToTopBtn {
+  display: none;        /* Hidden by default */
+  position: fixed;      /* Fixed/sticky position */
+  bottom: 20px;         /* Place the button 20px from the bottom */
+  right: 30px;          /* Place the button 30px from the right */
+  z-index: 99;          /* Make sure it does not get buried under other elements */
+  border: none;         /* Remove borders */
+  outline: none;        /* Remove outline */
+  background-color: #333; /* Set a background color */
+  color: white;         /* Text color */
+  cursor: pointer;      /* Add a mouse pointer on hover */
+  border-radius: 12px;
+  font-size: 18px;      /* Increase font size */
+  transition: opacity 0.3s; /* Smooth fade effect */
+}
+
+
 #go {
   background: var(--accent);
   color: var(--accent-ink);

@@ -290,3 +290,24 @@ $('copy').onclick = async () => {
   await navigator.clipboard.writeText(t);
   const b = $('copy'); b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Copy', 1200);
 };
+
+// Get the button element
+const backToTopBtn = document.getElementById("backToTopBtn");
+
+// Listen for scroll events to toggle button visibility
+window.addEventListener("scroll", () => {
+  // Show button when user scrolls down 300px from the top
+  if (window.scrollY > 300) {
+    backToTopBtn.style.display = "block";
+  } else {
+    backToTopBtn.style.display = "none";
+  }
+});
+
+// When the user clicks on the button, scroll to the top smoothly
+backToTopBtn.addEventListener("click", () => {
+  window.scrollTo({
+    top: 0,
+    behavior: "smooth" // Ensures a smooth transition back up
+  });
+});
