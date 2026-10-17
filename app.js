@@ -272,7 +272,10 @@ function txtOf(it) {
 }
 function toTxt() {   // every file, each under its own heading when there is more than one
   const multi = items.length > 1;
-  return items.filter(it => it.segments.length).map(it => (multi ? `=== ${it.file.name} ===\n\n` : '') + txtOf(it)).join('\n\n\n');
+  
+  // Check multi upload and whether remove heading is enabled
+  const toggleHeadingCheckbox = document.querySelector('#fileHeadings');
+  return items.filter(it => it.segments.length).map(it => ( (multi && !toggleHeadingCheckbox.checked) ? `=== ${it.file.name} ===\n\n` : '') + txtOf(it)).join('\n\n\n' );
 }
 const toSrt = it => it.segments.map((s, i) => `${i + 1}\n${srtTime(s.start)} --> ${srtTime(Math.max(s.end, s.start + 0.5))}\n${s.text}\n`).join('\n');
 function save(name, text) {
